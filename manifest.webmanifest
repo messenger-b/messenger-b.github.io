@@ -1,0 +1,20 @@
+{
+  "name": "Мессенджер Б — Учебный мессенджер",
+  "short_name": "Мессенджер Б",
+  "description": "Современный учебный мессенджер для школьного класса: чаты, друзья, объявления, расписание и ДЗ.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0d141d",
+  "theme_color": "#2AABEE",
+  "lang": "ru",
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

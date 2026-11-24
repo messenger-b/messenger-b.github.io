@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2AABEE"/>
+      <stop offset="100%" stop-color="#1A73E8"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="120" fill="url(#bg)"/>
+  <path d="M116 144c0-26 21-47 47-47h186c26 0 47 21 47 47v164c0 26-21 47-47 47H218l-68 56c-12 10-30 1-30-14v-42h-4c-26 0-47-21-47-47V144z" fill="rgba(255,255,255,0.16)"/>
+  <text x="256" y="310" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" font-size="220" font-weight="800" fill="#FFFFFF">Б</text>
+</svg>

@@ -1,0 +1,762 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark" data-accent="blue" data-wallpaper="tg-dots" data-bubble-style="classic">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0d141d" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Мессенджер Б" />
+  <title>Мессенджер Б — Учебный мессенджер</title>
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" type="image/svg+xml" href="/icons/icon.svg" />
+  <link rel="apple-touch-icon" href="/icons/icon.svg" />
+  <link rel="stylesheet" href="/styles.css?v=15" />
+</head>
+<body>
+  <div id="connection-banner" class="connection-banner hidden">
+    <span class="conn-dot"></span>
+    <span id="connection-text">Нет подключения к серверу. Переподключение...</span>
+  </div>
+
+  <!-- Top-center Toasts & In-App Push Notifications -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- PIN Lock Screen -->
+  <div id="pin-lock-screen" class="pin-lock-screen hidden">
+    <div class="pin-lock-card">
+      <div class="auth-logo">Б</div>
+      <h2>Мессенджер Б заблокирован</h2>
+      <p class="muted">Введите ваш PIN-код для доступа к чатам</p>
+      <form id="pin-unlock-form">
+        <input type="password" id="pin-unlock-input" inputmode="numeric" maxlength="6" placeholder="••••" autocomplete="off" required />
+        <button type="submit" class="btn btn-primary full-width">Разблокировать</button>
+      </form>
+      <p id="pin-unlock-error" class="form-error hidden"></p>
+    </div>
+  </div>
+
+  <!-- Auth View -->
+  <div id="auth-view" class="auth-view hidden">
+    <div class="auth-card">
+      <div class="auth-header">
+        <div class="auth-logo">Б</div>
+        <h1>Мессенджер Б</h1>
+        <p id="auth-class-name" class="muted">Основной класс 7Б • Учебный мессенджер</p>
+      </div>
+
+      <div id="first-setup-banner" class="info-banner hidden">
+        <strong>Первая настройка:</strong> первый зарегистрированный аккаунт автоматически станет системным администратором.
+      </div>
+
+      <div class="auth-tabs">
+        <button type="button" class="auth-tab active" data-auth-tab="login">Вход</button>
+        <button type="button" class="auth-tab" data-auth-tab="register">Регистрация</button>
+      </div>
+
+      <form id="login-form" class="auth-form">
+        <div class="field">
+          <label>Электронная почта</label>
+          <input type="email" name="identifier" placeholder="ivanov@school.ru" required autocomplete="username" />
+        </div>
+        <div class="field">
+          <label>Пароль</label>
+          <input type="password" name="password" placeholder="Введите пароль" required autocomplete="current-password" />
+        </div>
+        <p id="login-error" class="form-error hidden"></p>
+        <button type="submit" class="btn btn-primary full-width">Войти в мессенджер</button>
+      </form>
+
+      <form id="register-form" class="auth-form hidden">
+        <div class="field"><label>Имя и фамилия</label><input type="text" name="displayName" placeholder="Например: Алексей Смирнов" required /></div>
+        <div class="field"><label>Логин (латиница, цифры, _)</label><input type="text" name="username" placeholder="alexey_s" required autocomplete="username" /></div>
+        <div class="field"><label>Электронная почта</label><input type="email" name="email" placeholder="alexey@school.ru" required autocomplete="email" /></div>
+        <div class="field"><label>Пароль (минимум 6 символов)</label><input type="password" name="password" placeholder="Придумайте надёжный пароль" required minlength="6" autocomplete="new-password" /></div>
+        <p class="muted small">Новый аккаунт создаётся с базовым классом. Администратор назначит ваш класс после проверки.</p>
+        <p id="register-error" class="form-error hidden"></p>
+        <button type="submit" class="btn btn-primary full-width">Создать аккаунт</button>
+      </form>
+
+      <div class="auth-footer">
+        <button type="button" id="pwa-install-btn-auth" class="btn btn-ghost hidden"><span data-ico="download" data-ico-size="16"></span> Установить приложение</button>
+        <span class="muted small">Безопасный вход • Сохранение сессии • Работает в РФ</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main App Shell -->
+  <div id="app-shell" class="app-shell hidden">
+    <!-- Mobile Top Navigation Bar (ZERO collision with Netlify badge) -->
+    <header class="mobile-topbar" id="mobile-topbar">
+      <div class="mobile-brand-row">
+        <div class="mobile-brand">
+          <div class="rail-brand sm">Б</div>
+          <span class="mobile-brand-title">Мессенджер Б</span>
+        </div>
+        <div class="mobile-top-actions">
+          <button type="button" id="mobile-notif-btn" class="icon-btn hidden" title="Включить уведомления"><span data-ico="bell" data-ico-size="18"></span></button>
+          <button type="button" id="mobile-theme-btn" class="icon-btn" title="Сменить тему"><span id="mobile-theme-ico" data-ico="moon" data-ico-size="18"></span></button>
+        </div>
+      </div>
+      <nav class="mobile-nav" id="mobile-nav" aria-label="Мобильная навигация">
+        <button class="mnav-btn active" data-section="chats"><span data-ico="chats" data-ico-size="18"></span><span>Чаты</span><span id="mbadge-chats" class="mbadge hidden">0</span></button>
+        <button class="mnav-btn" data-section="announcements"><span data-ico="megaphone" data-ico-size="18"></span><span>Объявл.</span><span id="mbadge-ann" class="mbadge hidden">0</span></button>
+        <button class="mnav-btn" data-section="schedule"><span data-ico="calendar" data-ico-size="18"></span><span>Уроки</span></button>
+        <button class="mnav-btn" data-section="homework"><span data-ico="book" data-ico-size="18"></span><span>ДЗ</span><span id="mbadge-hw" class="mbadge warn hidden">0</span></button>
+        <button class="mnav-btn" data-section="widgets"><span data-ico="users" data-ico-size="18"></span><span>Друзья</span><span id="mbadge-friends" class="mbadge hidden">0</span></button>
+        <button class="mnav-btn manager-only hidden" data-section="admin"><span data-ico="shield" data-ico-size="18"></span><span>Админ</span><span id="mbadge-online" class="mbadge ok hidden">0</span></button>
+        <button class="mnav-btn" data-section="settings"><span data-ico="settings" data-ico-size="18"></span><span>Настр.</span></button>
+      </nav>
+    </header>
+
+    <!-- Desktop Left Navigation Rail -->
+    <nav class="nav-rail" aria-label="Основная навигация">
+      <div class="rail-brand" title="Мессенджер Б">Б</div>
+      <div class="rail-items">
+        <button class="rail-btn active" data-section="chats" title="Чаты">
+          <span class="rail-icon" data-ico="chats" data-ico-size="21"></span>
+          <span class="rail-label">Чаты</span>
+          <span id="badge-chats" class="badge hidden">0</span>
+        </button>
+        <button class="rail-btn" data-section="announcements" title="Объявления">
+          <span class="rail-icon" data-ico="megaphone" data-ico-size="21"></span>
+          <span class="rail-label">Объявл.</span>
+          <span id="badge-announcements" class="badge hidden">0</span>
+        </button>
+        <button class="rail-btn" data-section="schedule" title="Расписание">
+          <span class="rail-icon" data-ico="calendar" data-ico-size="21"></span>
+          <span class="rail-label">Уроки</span>
+        </button>
+        <button class="rail-btn" data-section="homework" title="Домашние задания">
+          <span class="rail-icon" data-ico="book" data-ico-size="21"></span>
+          <span class="rail-label">ДЗ</span>
+          <span id="badge-homework" class="badge badge-warn hidden">0</span>
+        </button>
+        <button class="rail-btn" data-section="widgets" title="Друзья, класс и учебные инструменты">
+          <span class="rail-icon" data-ico="users" data-ico-size="21"></span>
+          <span class="rail-label">Друзья</span>
+          <span id="badge-friends" class="badge hidden">0</span>
+        </button>
+        <button class="rail-btn manager-only hidden" data-section="admin" id="rail-admin-btn" title="Админ-панель и онлайн">
+          <span class="rail-icon" data-ico="shield" data-ico-size="21"></span>
+          <span class="rail-label" id="rail-admin-label">Админ</span>
+          <span id="badge-online" class="badge badge-ok hidden">0</span>
+        </button>
+        <button class="rail-btn" data-section="settings" title="Настройки, персонализация, конфиденциальность">
+          <span class="rail-icon" data-ico="settings" data-ico-size="21"></span>
+          <span class="rail-label">Настройки</span>
+        </button>
+      </div>
+
+      <div class="rail-bottom">
+        <button id="quick-lock-btn" class="rail-btn hidden" title="Заблокировать экран PIN-кодом">
+          <span class="rail-icon" data-ico="lock" data-ico-size="19"></span>
+        </button>
+        <button id="quick-theme-btn" class="rail-btn" title="Переключить тему">
+          <span class="rail-icon" id="quick-theme-icon" data-ico="sun" data-ico-size="19"></span>
+        </button>
+        <button id="rail-profile-btn" class="rail-avatar-btn" title="Мой профиль"></button>
+      </div>
+    </nav>
+
+    <main class="main-area">
+      <!-- CHATS SECTION -->
+      <section id="section-chats" class="section-view active">
+        <aside class="chat-sidebar" id="chat-sidebar">
+          <div class="sidebar-header">
+            <div class="sidebar-title-row">
+              <h2 id="sidebar-class-title">Чаты</h2>
+              <div class="sidebar-actions">
+                <button id="btn-new-chat" class="icon-btn" title="Новый чат / Группа"><span data-ico="edit" data-ico-size="19"></span></button>
+              </div>
+            </div>
+            <div class="search-box">
+              <span class="search-icon" data-ico="search" data-ico-size="16"></span>
+              <input type="text" id="chat-search-input" placeholder="Поиск чатов..." />
+            </div>
+            <div class="chat-folders" id="chat-folders">
+              <button class="folder-pill active" data-folder="all">Все</button>
+              <button class="folder-pill" data-folder="dm">Личные</button>
+              <button class="folder-pill" data-folder="group">Группы</button>
+              <button class="folder-pill" data-folder="unread">Новые</button>
+            </div>
+          </div>
+
+          <div id="notif-prompt-banner" class="notif-prompt-banner hidden">
+            <span data-ico="bell" data-ico-size="16"></span>
+            <span>Включить уведомления о новых сообщениях?</span>
+            <button type="button" id="btn-enable-notif-banner" class="btn btn-primary btn-xs">Включить</button>
+            <button type="button" id="btn-dismiss-notif-banner" class="icon-btn tiny"><span data-ico="close" data-ico-size="14"></span></button>
+          </div>
+
+          <div id="chat-list" class="chat-list"></div>
+        </aside>
+
+        <div class="chat-pane" id="chat-pane">
+          <div id="chat-empty-state" class="empty-state">
+            <div class="empty-icon-circle"><span data-ico="chats" data-ico-size="32"></span></div>
+            <h3>Выберите чат</h3>
+            <p class="muted">Откройте общий чат класса, личную переписку или создайте новую группу.</p>
+          </div>
+
+          <div id="chat-active-container" class="chat-active-container hidden">
+            <header class="chat-header">
+              <button id="mobile-back-btn" class="icon-btn mobile-only" title="Назад к чатам"><span data-ico="back" data-ico-size="20"></span></button>
+              <div class="chat-header-info" id="chat-header-info">
+                <div id="active-chat-avatar" class="avatar"></div>
+                <div class="chat-header-text">
+                  <div class="chat-header-name-row">
+                    <h3 id="active-chat-title"></h3>
+                    <span id="active-chat-badge" class="role-badge hidden"></span>
+                  </div>
+                  <div id="active-chat-subtitle" class="chat-subtitle"></div>
+                </div>
+              </div>
+              <div class="chat-header-actions">
+                <button id="btn-chat-search" class="icon-btn" title="Поиск в чате"><span data-ico="search" data-ico-size="19"></span></button>
+                <button id="btn-chat-mute" class="icon-btn" title="Звук уведомлений"><span data-ico="bell" data-ico-size="19"></span></button>
+                <button id="btn-chat-info" class="icon-btn" title="Информация о чате и участники"><span data-ico="info" data-ico-size="19"></span></button>
+              </div>
+            </header>
+
+            <div id="in-chat-search-bar" class="in-chat-search-bar hidden">
+              <input type="text" id="in-chat-search-input" placeholder="Найти сообщения в этом чате..." />
+              <button id="in-chat-search-go" class="btn btn-sm btn-primary">Найти</button>
+              <button id="in-chat-search-close" class="icon-btn"><span data-ico="close" data-ico-size="16"></span></button>
+            </div>
+
+            <div id="pinned-bar" class="pinned-bar hidden">
+              <div class="pinned-bar-content" id="pinned-bar-jump">
+                <span class="pinned-label"><span data-ico="pin" data-ico-size="13"></span> Закреплённое сообщение</span>
+                <span id="pinned-bar-text" class="pinned-text"></span>
+              </div>
+              <button id="pinned-bar-unpin" class="icon-btn small" title="Открепить"><span data-ico="close" data-ico-size="14"></span></button>
+            </div>
+
+            <div id="messages-scroll" class="messages-scroll">
+              <div id="load-older-wrap" class="load-older-wrap hidden">
+                <button id="btn-load-older" class="btn btn-sm btn-ghost">Загрузить ранние сообщения</button>
+              </div>
+              <div id="messages-list" class="messages-list"></div>
+            </div>
+
+            <button type="button" id="btn-scroll-bottom" class="scroll-bottom-btn hidden" title="Вниз">
+              <span data-ico="chevronDown" data-ico-size="20"></span>
+            </button>
+
+            <div id="composer-readonly-bar" class="composer-readonly-bar hidden"></div>
+
+            <!-- Floating Composer + Mention Autocomplete + Emoji Picker -->
+            <div id="composer-wrap" class="composer-wrap">
+              <div class="composer-shell">
+                <!-- @Mention Autocomplete Popover -->
+                <div id="mention-popover" class="mention-popover hidden"></div>
+
+                <!-- Built-in Emoji Picker -->
+                <div id="emoji-picker" class="emoji-picker hidden">
+                  <div class="emoji-tabs" id="emoji-tabs">
+                    <button type="button" class="emoji-tab active" data-ecat="popular">Популярные</button>
+                    <button type="button" class="emoji-tab" data-ecat="faces">Эмоции</button>
+                    <button type="button" class="emoji-tab" data-ecat="gestures">Жесты</button>
+                    <button type="button" class="emoji-tab" data-ecat="study">Учёба</button>
+                    <button type="button" class="emoji-tab" data-ecat="symbols">Символы</button>
+                  </div>
+                  <div id="emoji-grid" class="emoji-grid"></div>
+                </div>
+
+                <div id="composer-context-bar" class="composer-context-bar hidden">
+                  <div class="context-bar-line"></div>
+                  <div class="context-bar-body">
+                    <div id="composer-context-title" class="context-bar-title"></div>
+                    <div id="composer-context-text" class="context-bar-text"></div>
+                  </div>
+                  <button id="composer-context-cancel" class="icon-btn small"><span data-ico="close" data-ico-size="15"></span></button>
+                </div>
+
+                <div id="voice-recording-bar" class="voice-recording-bar hidden">
+                  <span class="rec-dot"></span>
+                  <span id="voice-rec-timer" class="rec-timer">0:00</span>
+                  <div class="voice-wave"><span></span><span></span><span></span><span></span></div>
+                  <span class="muted small">Запись голосового...</span>
+                  <div class="voice-rec-actions">
+                    <button id="btn-voice-cancel" class="btn btn-sm btn-ghost">Отмена</button>
+                    <button id="btn-voice-send" class="btn btn-sm btn-primary">Отправить</button>
+                  </div>
+                </div>
+
+                <div class="composer-row" id="composer-row">
+                  <input type="file" id="file-upload-input" class="hidden" />
+                  <button id="btn-emoji-picker" class="icon-btn" title="Эмодзи"><span data-ico="smile" data-ico-size="20"></span></button>
+                  <button id="btn-attach-file" class="icon-btn" title="Прикрепить файл или фото"><span data-ico="paperclip" data-ico-size="20"></span></button>
+                  <button id="btn-create-poll" class="icon-btn" title="Создать опрос"><span data-ico="poll" data-ico-size="20"></span></button>
+                  <textarea id="message-input" rows="1" placeholder="Сообщение... (введите @ чтобы упомянуть)"></textarea>
+                  <button id="btn-voice-record" class="icon-btn" title="Записать голосовое сообщение"><span data-ico="mic" data-ico-size="20"></span></button>
+                  <button id="btn-send-msg" class="btn-send hidden" title="Отправить"><span data-ico="send" data-ico-size="18"></span></button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- SCHEDULE SECTION -->
+      <section id="section-schedule" class="section-view">
+        <div class="page-container">
+          <div class="page-header">
+            <div>
+              <h2>Расписание уроков</h2>
+              <p id="schedule-live-status" class="muted">Актуальное расписание класса</p>
+            </div>
+            <div class="inline-actions">
+              <select id="schedule-class-select" class="select-input admin-only hidden" style="min-width:120px"></select>
+              <button id="btn-add-lesson" class="btn btn-primary academic-editor-only hidden"><span data-ico="plus" data-ico-size="16"></span> Добавить урок</button>
+            </div>
+          </div>
+          <div id="schedule-day-tabs" class="pill-tabs"></div>
+          <div id="schedule-list" class="cards-grid"></div>
+        </div>
+      </section>
+
+      <!-- HOMEWORK SECTION -->
+      <section id="section-homework" class="section-view">
+        <div class="page-container">
+          <div class="page-header">
+            <div>
+              <h2>Домашние задания</h2>
+              <p id="homework-progress-summary" class="muted">Отмечайте выполненные задания для себя</p>
+            </div>
+            <div class="inline-actions">
+              <select id="homework-class-select" class="select-input admin-only hidden" style="min-width:120px"></select>
+              <button id="btn-add-homework" class="btn btn-primary academic-editor-only hidden"><span data-ico="plus" data-ico-size="16"></span> Добавить ДЗ</button>
+            </div>
+          </div>
+          <div class="progress-track-wrap">
+            <div class="progress-track"><div id="homework-progress-bar" class="progress-fill"></div></div>
+          </div>
+          <div class="pill-tabs" id="homework-filter-tabs">
+            <button class="pill-tab active" data-hw-filter="active">Активные</button>
+            <button class="pill-tab" data-hw-filter="completed">Выполненные</button>
+            <button class="pill-tab" data-hw-filter="all">Все</button>
+          </div>
+          <div id="homework-list" class="cards-stack"></div>
+        </div>
+      </section>
+
+      <!-- FRIENDS (DISCORD-STYLE), CLASSMATES & STUDY WIDGETS -->
+      <section id="section-widgets" class="section-view">
+        <div class="page-container">
+          <div class="page-header">
+            <div>
+              <h2>Друзья, класс и учёба</h2>
+              <p class="muted">Добавляйте друзей по @логину, общайтесь с классом и пользуйтесь виджетами</p>
+            </div>
+          </div>
+
+          <!-- Discord-style Add Friend by exact @username -->
+          <div class="settings-card" style="margin-bottom:16px">
+            <div class="widget-head">
+              <h3 class="ico-title"><span data-ico="userPlus" data-ico-size="18"></span> Найти по @логину и добавить в друзья</h3>
+            </div>
+            <p class="muted small" style="margin-bottom:10px">Ученики из других классов скрыты из общего списка — найти их можно только по точному @username.</p>
+            <form id="friend-search-form" class="inline-actions">
+              <input type="text" id="friend-search-input" placeholder="Введите точный @username..." class="text-input-sm" style="max-width:280px" required />
+              <button type="submit" class="btn btn-primary btn-sm"><span data-ico="search" data-ico-size="15"></span> Найти</button>
+            </form>
+            <div id="friend-search-result" style="margin-top:10px"></div>
+          </div>
+
+          <!-- Incoming Friend Requests -->
+          <div id="friend-requests-card" class="settings-card hidden" style="margin-bottom:16px">
+            <h3 class="ico-title" style="margin-bottom:10px"><span data-ico="bell" data-ico-size="17"></span> Входящие заявки в друзья</h3>
+            <div id="friend-requests-list" class="list-stack"></div>
+          </div>
+
+          <!-- Friends List -->
+          <div class="settings-card" style="margin-bottom:18px">
+            <div class="widget-head">
+              <h3 class="ico-title"><span data-ico="users" data-ico-size="17"></span> Мои друзья</h3>
+              <span id="friends-count" class="muted small"></span>
+            </div>
+            <div id="friends-list" class="classmates-grid"></div>
+          </div>
+
+          <!-- Study Widgets -->
+          <div class="widgets-grid">
+            <div class="widget-card">
+              <div class="widget-head">
+                <h3 class="ico-title"><span data-ico="clock" data-ico-size="17"></span> Таймер Помодоро</h3>
+                <span id="pomo-mode-badge" class="tag">Учёба 25 мин</span>
+              </div>
+              <div id="pomo-display" class="pomo-display">25:00</div>
+              <div class="widget-actions">
+                <button id="pomo-start" class="btn btn-primary btn-sm">Старт</button>
+                <button id="pomo-reset" class="btn btn-ghost btn-sm">Сброс</button>
+                <button id="pomo-switch" class="btn btn-ghost btn-sm">Перерыв 5м</button>
+              </div>
+            </div>
+
+            <div class="widget-card">
+              <div class="widget-head">
+                <h3 class="ico-title"><span data-ico="school" data-ico-size="17"></span> Средний балл</h3>
+                <span id="grade-avg-badge" class="tag">—</span>
+              </div>
+              <p class="muted small">Нажимайте на оценки:</p>
+              <div class="grade-buttons">
+                <button class="grade-btn g5" data-grade="5">5</button>
+                <button class="grade-btn g4" data-grade="4">4</button>
+                <button class="grade-btn g3" data-grade="3">3</button>
+                <button class="grade-btn g2" data-grade="2">2</button>
+                <button id="grade-clear" class="btn btn-ghost btn-sm">Очистить</button>
+              </div>
+              <div id="grade-list-view" class="grade-chips"></div>
+              <div id="grade-advice" class="muted small"></div>
+            </div>
+
+            <div class="widget-card">
+              <div class="widget-head">
+                <h3 class="ico-title"><span data-ico="note" data-ico-size="17"></span> Быстрая заметка</h3>
+                <span class="muted small">Локально</span>
+              </div>
+              <textarea id="quick-notes-area" class="quick-notes-area" rows="4" placeholder="Формулы, идеи, список дел..."></textarea>
+            </div>
+          </div>
+
+          <div class="sub-section-head">
+            <h3>Одноклассники и учителя</h3>
+            <span id="classmates-count" class="muted small"></span>
+          </div>
+          <div id="classmates-list" class="classmates-grid"></div>
+        </div>
+      </section>
+
+      <!-- DEDICATED ADMIN PANEL -->
+      <section id="section-admin" class="section-view">
+        <div class="page-container">
+          <div class="page-header">
+            <div>
+              <h2 id="admin-page-title">Админ-панель</h2>
+              <p id="admin-page-subtitle" class="muted">Онлайн-мониторинг, список всех пользователей, роли и классы</p>
+            </div>
+            <button id="btn-refresh-admin" class="btn btn-ghost btn-sm"><span data-ico="refresh" data-ico-size="15"></span> Обновить</button>
+          </div>
+
+          <div class="settings-card" style="margin-bottom:14px">
+            <h3 id="adm-stats-title">Живая статистика</h3>
+            <div id="adm-stats-grid" class="stats-grid"></div>
+          </div>
+
+          <div class="settings-card admin-only hidden" style="margin-bottom:14px">
+            <h3>Классы школы</h3>
+            <p class="muted small">Добавляйте классы — общий чат и объявления создадутся автоматически.</p>
+            <div class="inline-actions" style="margin-top:10px">
+              <input type="text" id="adm-new-class-input" placeholder="Например: 7Г" class="text-input-sm" />
+              <button type="button" id="adm-btn-add-class" class="btn btn-primary btn-sm"><span data-ico="plus" data-ico-size="15"></span> Добавить класс</button>
+            </div>
+            <div id="adm-classes-chips" class="grade-chips" style="margin-top:10px"></div>
+          </div>
+
+          <div class="settings-card">
+            <div class="widget-head" style="flex-wrap:wrap">
+              <h3 id="adm-users-heading">Пользователи</h3>
+              <div class="inline-actions">
+                <input type="text" id="adm-user-search" placeholder="Поиск по имени, @логину, почте..." class="text-input-sm" />
+                <select id="adm-user-filter" class="select-input" style="min-width:130px;padding:7px 10px">
+                  <option value="all">Все</option>
+                  <option value="online">В сети</option>
+                  <option value="admin">Админы</option>
+                  <option value="teacher">Классруки</option>
+                  <option value="leader">Старосты</option>
+                  <option value="student">Ученики</option>
+                </select>
+              </div>
+            </div>
+            <div id="adm-users-list" class="list-stack" style="margin-top:12px"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- SETTINGS SECTION -->
+      <section id="section-settings" class="section-view">
+        <div class="page-container">
+          <div class="page-header">
+            <div>
+              <h2>Настройки</h2>
+              <p class="muted">Профиль, персонализация, конфиденциальность и уведомления</p>
+            </div>
+            <button id="btn-logout" class="btn btn-danger btn-sm"><span data-ico="logout" data-ico-size="15"></span> Выйти</button>
+          </div>
+
+          <div class="pill-tabs" id="settings-tabs">
+            <button class="pill-tab active" data-settings-tab="profile"><span data-ico="user" data-ico-size="15"></span> Профиль</button>
+            <button class="pill-tab" data-settings-tab="personalization"><span data-ico="palette" data-ico-size="15"></span> Персонализация</button>
+            <button class="pill-tab" data-settings-tab="privacy"><span data-ico="lock" data-ico-size="15"></span> Конфиденциальность</button>
+            <button class="pill-tab" data-settings-tab="notifications"><span data-ico="bell" data-ico-size="15"></span> Уведомления</button>
+            <button class="pill-tab manager-only hidden" data-settings-tab="admin" id="tab-btn-manage"><span data-ico="shield" data-ico-size="15"></span> Управление</button>
+          </div>
+
+          <div id="settings-tab-profile" class="settings-panel active">
+            <div class="settings-card">
+              <div class="profile-avatar-row">
+                <div id="settings-avatar-preview" class="avatar avatar-lg"></div>
+                <div>
+                  <h3 id="settings-profile-name"></h3>
+                  <p id="settings-profile-meta" class="muted small"></p>
+                  <div class="inline-actions" style="margin-top:8px">
+                    <input type="file" id="avatar-upload-input" accept="image/*" class="hidden" />
+                    <button id="btn-upload-avatar" class="btn btn-sm btn-primary">Загрузить фото</button>
+                  </div>
+                </div>
+              </div>
+              <form id="profile-form" class="settings-form">
+                <div class="form-grid-2">
+                  <div class="field"><label>Имя и фамилия</label><input type="text" id="prof-display-name" required /></div>
+                  <div class="field"><label>Логин (@username)</label><input type="text" id="prof-username" required /></div>
+                </div>
+                <div class="form-grid-2">
+                  <div class="field"><label>Эмодзи-статус</label><input type="text" id="prof-status-emoji" maxlength="8" placeholder="Например: 📚 или 🔥" /></div>
+                  <div class="field"><label>Цвет аватара</label><input type="color" id="prof-avatar-color" /></div>
+                </div>
+                <div class="field"><label>О себе (био)</label><textarea id="prof-bio" rows="2" maxlength="180" placeholder="Расскажите немного о себе..."></textarea></div>
+                <button type="submit" class="btn btn-primary">Сохранить профиль</button>
+              </form>
+            </div>
+            <div class="settings-card">
+              <h3>Смена пароля</h3>
+              <form id="password-form" class="settings-form" style="margin-top:10px">
+                <div class="form-grid-2">
+                  <div class="field"><label>Текущий пароль</label><input type="password" id="pwd-current" required /></div>
+                  <div class="field"><label>Новый пароль (мин. 6 символов)</label><input type="password" id="pwd-new" required minlength="6" /></div>
+                </div>
+                <button type="submit" class="btn btn-ghost">Обновить пароль</button>
+              </form>
+            </div>
+          </div>
+
+          <!-- EXPANDED PERSONALIZATION -->
+          <div id="settings-tab-personalization" class="settings-panel">
+            <div class="settings-card">
+              <h3>Оформление и цвета</h3>
+              <div class="setting-row">
+                <div><strong>Тема интерфейса</strong><p class="muted small">Тёмная, светлая или системная</p></div>
+                <div class="segmented" id="pref-theme-group">
+                  <button type="button" data-theme-val="dark">Тёмная</button>
+                  <button type="button" data-theme-val="light">Светлая</button>
+                  <button type="button" data-theme-val="system">Авто</button>
+                </div>
+              </div>
+              <div class="setting-row">
+                <div><strong>Акцентный цвет (8 палитр)</strong><p class="muted small">Цвет кнопок, упоминаний и ваших сообщений</p></div>
+                <div class="color-swatches" id="pref-accent-group">
+                  <button type="button" class="swatch" data-accent-val="blue" style="background:#2AABEE" title="Telegram Blue"></button>
+                  <button type="button" class="swatch" data-accent-val="emerald" style="background:#10B981" title="Изумруд"></button>
+                  <button type="button" class="swatch" data-accent-val="violet" style="background:#8B5CF6" title="Фиолет"></button>
+                  <button type="button" class="swatch" data-accent-val="indigo" style="background:#6366F1" title="Индиго"></button>
+                  <button type="button" class="swatch" data-accent-val="pink" style="background:#EC4899" title="Розовый"></button>
+                  <button type="button" class="swatch" data-accent-val="coral" style="background:#F43F5E" title="Коралл"></button>
+                  <button type="button" class="swatch" data-accent-val="amber" style="background:#F59E0B" title="Янтарь"></button>
+                  <button type="button" class="swatch" data-accent-val="teal" style="background:#14B8A6" title="Бирюза"></button>
+                </div>
+              </div>
+              <div class="setting-row">
+                <div><strong>Фон чата (обои)</strong><p class="muted small">Подложка окна переписки</p></div>
+                <select id="pref-wallpaper" class="select-input">
+                  <option value="tg-dots">Точечный паттерн Telegram</option>
+                  <option value="aurora">Северное сияние</option>
+                  <option value="midnight">Глубокая ночь</option>
+                  <option value="graphite">Графитовая сетка</option>
+                  <option value="space">Космос</option>
+                  <option value="none">Чистый минимализм</option>
+                </select>
+              </div>
+              <div class="setting-row">
+                <div><strong>Стиль пузырей сообщений</strong><p class="muted small">Внешний вид исходящих сообщений</p></div>
+                <select id="pref-bubble-style" class="select-input">
+                  <option value="classic">Классический</option>
+                  <option value="gradient">Градиентный (как в Telegram)</option>
+                  <option value="minimal">Минимализм с контуром</option>
+                </select>
+              </div>
+              <div class="setting-row">
+                <div><strong>Размер текста сообщений</strong></div>
+                <select id="pref-font-size" class="select-input">
+                  <option value="14">Компактный (14px)</option>
+                  <option value="15">Стандартный (15px)</option>
+                  <option value="16">Крупный (16px)</option>
+                  <option value="17">Очень крупный (17px)</option>
+                </select>
+              </div>
+              <div class="setting-row">
+                <div><strong>Скругление пузырей</strong></div>
+                <select id="pref-bubble-radius" class="select-input">
+                  <option value="10">Строгие (10px)</option>
+                  <option value="18">Классические (18px)</option>
+                  <option value="24">Округлые (24px)</option>
+                </select>
+              </div>
+              <div class="setting-row">
+                <div><strong>Плавные анимации интерфейса</strong><p class="muted small">Анимация сообщений, реакций и вкладок</p></div>
+                <label class="switch"><input type="checkbox" id="pref-animations" /><span class="slider"></span></label>
+              </div>
+              <div class="setting-row">
+                <div><strong>Крупные эмодзи</strong><p class="muted small">Увеличивать сообщения из 1–3 эмодзи без текста</p></div>
+                <label class="switch"><input type="checkbox" id="pref-large-emojis" /><span class="slider"></span></label>
+              </div>
+              <div class="setting-row">
+                <div><strong>Компактный режим списка чатов</strong></div>
+                <label class="switch"><input type="checkbox" id="pref-compact-mode" /><span class="slider"></span></label>
+              </div>
+              <div class="setting-row">
+                <div><strong>Отправка сообщения по Enter</strong><p class="muted small">Shift+Enter переносит строку</p></div>
+                <label class="switch"><input type="checkbox" id="pref-send-on-enter" /><span class="slider"></span></label>
+              </div>
+            </div>
+          </div>
+
+          <!-- EXPANDED PRIVACY -->
+          <div id="settings-tab-privacy" class="settings-panel">
+            <div class="settings-card">
+              <h3>Конфиденциальность и доступ</h3>
+              <div class="setting-row">
+                <div><strong>Статус «в сети» и время визита</strong></div>
+                <select id="priv-last-seen" class="select-input">
+                  <option value="all">Все</option>
+                  <option value="class_friends">Друзья и одноклассники</option>
+                  <option value="friends">Только друзья</option>
+                  <option value="nobody">Никто (невидимка)</option>
+                </select>
+              </div>
+              <div class="setting-row">
+                <div><strong>Кто может писать мне в личку</strong></div>
+                <select id="priv-allow-dm" class="select-input">
+                  <option value="all">Все</option>
+                  <option value="class_friends">Друзья и одноклассники</option>
+                  <option value="friends">Только друзья</option>
+                  <option value="nobody">Только администрация и классрук</option>
+                </select>
+              </div>
+              <div class="setting-row">
+                <div><strong>Кто может добавлять меня в группы</strong><p class="muted small">Незнакомцы не могут добавлять вас в любом случае</p></div>
+                <select id="priv-allow-group" class="select-input">
+                  <option value="class_friends">Друзья и одноклассники</option>
+                  <option value="friends">Только друзья</option>
+                  <option value="admins">Только админы и классрук</option>
+                  <option value="nobody">Никто</option>
+                </select>
+              </div>
+              <div class="setting-row">
+                <div><strong>Заявки в друзья</strong></div>
+                <select id="priv-allow-friends" class="select-input">
+                  <option value="all">Все (кто знает @логин)</option>
+                  <option value="classmates">Только одноклассники</option>
+                  <option value="nobody">Никто</option>
+                </select>
+              </div>
+              <div class="setting-row">
+                <div><strong>Показывать «печатает...» и запись голосового</strong></div>
+                <label class="switch"><input type="checkbox" id="priv-show-typing" /><span class="slider"></span></label>
+              </div>
+              <div class="setting-row">
+                <div><strong>Отчёты о прочтении</strong><p class="muted small">Показывать в «Данных» сообщения, что вы его прочитали</p></div>
+                <label class="switch"><input type="checkbox" id="priv-read-receipts" /><span class="slider"></span></label>
+              </div>
+              <div class="setting-row">
+                <div><strong>Скрывать текст сообщений в уведомлениях</strong><p class="muted small">В пушах будет только имя отправителя без текста</p></div>
+                <label class="switch"><input type="checkbox" id="priv-hide-preview" /><span class="slider"></span></label>
+              </div>
+            </div>
+
+            <div class="settings-card">
+              <h3>Код-пароль (блокировка экрана)</h3>
+              <p class="muted small">Защитите мессенджер PIN-кодом из 4–6 цифр.</p>
+              <div class="inline-actions" style="margin-top:12px">
+                <input type="password" id="priv-pin-input" inputmode="numeric" maxlength="6" placeholder="Новый PIN (4–6 цифр)" class="text-input-sm" />
+                <button id="btn-set-pin" class="btn btn-primary btn-sm">Установить PIN</button>
+                <button id="btn-remove-pin" class="btn btn-ghost btn-sm hidden">Отключить PIN</button>
+              </div>
+            </div>
+
+            <div class="settings-card">
+              <h3>Чёрный список</h3>
+              <div id="blocked-users-list" class="list-stack" style="margin-top:12px"></div>
+            </div>
+
+            <div class="settings-card">
+              <div class="widget-head">
+                <h3>Активные сессии (устройства)</h3>
+                <button id="btn-revoke-other-sessions" class="btn btn-ghost btn-sm">Завершить остальные</button>
+              </div>
+              <div id="sessions-list" class="list-stack" style="margin-top:12px"></div>
+            </div>
+          </div>
+
+          <div id="settings-tab-notifications" class="settings-panel">
+            <div class="settings-card">
+              <h3>Уведомления и звук</h3>
+              <div class="setting-row">
+                <div><strong>Звуки новых сообщений</strong></div>
+                <label class="switch"><input type="checkbox" id="notif-sound" /><span class="slider"></span></label>
+              </div>
+              <div class="setting-row">
+                <div><strong>Системные уведомления (когда окно не активно)</strong><p id="notif-perm-status" class="muted small">Показывает пуши через Service Worker на компьютере и Android PWA</p></div>
+                <label class="switch"><input type="checkbox" id="notif-desktop" /><span class="slider"></span></label>
+              </div>
+              <div class="inline-actions" style="margin-top:12px">
+                <button id="btn-test-sound" class="btn btn-ghost btn-sm"><span data-ico="volume" data-ico-size="15"></span> Проверить звук</button>
+                <button id="btn-test-notif" class="btn btn-ghost btn-sm"><span data-ico="bell" data-ico-size="15"></span> Тест уведомления</button>
+                <button id="pwa-install-btn-settings" class="btn btn-primary btn-sm hidden"><span data-ico="download" data-ico-size="15"></span> Установить PWA</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="settings-tab-admin" class="settings-panel">
+            <div class="settings-card">
+              <h3 id="manage-stats-title">Статистика</h3>
+              <div id="admin-stats-grid" class="stats-grid"></div>
+            </div>
+            <div class="settings-card admin-only hidden" id="admin-classes-card">
+              <h3>Классы школы</h3>
+              <div class="inline-actions" style="margin-top:10px">
+                <input type="text" id="new-class-name-input" placeholder="Например: 7Г" class="text-input-sm" />
+                <button type="button" id="btn-add-class" class="btn btn-primary btn-sm"><span data-ico="plus" data-ico-size="15"></span> Добавить класс</button>
+              </div>
+              <div id="admin-classes-chips" class="grade-chips" style="margin-top:10px"></div>
+            </div>
+            <div class="settings-card">
+              <h3 id="manage-users-title">Управление пользователями</h3>
+              <p id="manage-users-desc" class="muted small"></p>
+              <div id="admin-users-list" class="list-stack" style="margin-top:12px"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Modal Overlay -->
+  <div id="modal-overlay" class="modal-overlay hidden">
+    <div class="modal-card" id="modal-card">
+      <div class="modal-header">
+        <h3 id="modal-title"></h3>
+        <button id="modal-close" class="icon-btn"><span data-ico="close" data-ico-size="18"></span></button>
+      </div>
+      <div id="modal-body" class="modal-body"></div>
+    </div>
+  </div>
+
+  <!-- Lightbox -->
+  <div id="lightbox" class="lightbox hidden">
+    <button id="lightbox-close" class="lightbox-close"><span data-ico="close" data-ico-size="22"></span></button>
+    <img id="lightbox-img" src="" alt="Просмотр изображения" />
+  </div>
+
+  <!-- Message Context Menu -->
+  <div id="msg-context-menu" class="context-menu hidden"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="/icons.js?v=13"></script>
+  <script src="/config.js?v=13"></script>
+  <script src="/fcm-bridge.js?v=6"></script>
+  <script src="/supabase-bridge.js?v=14"></script>
+  <script src="/app.js?v=13"></script>
+</body>
+</html>
