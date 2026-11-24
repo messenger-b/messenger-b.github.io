@@ -1,4 +1,4 @@
-/* ==================== DESIGN TOKENS (TELEGRAM PRO v16) ==================== */
+/* ==================== DESIGN TOKENS (TELEGRAM PRO v17) ==================== */
 :root {
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --accent: #2AABEE;
@@ -641,7 +641,7 @@ body.compact .chat-item .avatar { width: 38px; height: 38px; font-size: 14px; }
 .hw-card.done .hw-check { background: var(--success); border-color: var(--success); color: #fff; }
 .hw-body { flex: 1; min-width: 0; }
 .hw-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
-.tag { font-size: 11.5px; font-weight: 700; padding: 3px 9px; border-radius: 8px; background: var(--accent-soft); color: var(--accent); }
+.tag { font-size: 11.5px; font-weight: 700; padding: 3px 9px; border-radius: 8px; background: var(--accent-soft); color: var(--accent); white-space: nowrap; }
 .tag-high { background: rgba(244,63,94,0.18); color: var(--danger); }
 .tag-overdue { background: rgba(245,158,11,0.2); color: var(--warn); }
 
@@ -658,10 +658,21 @@ body.compact .chat-item .avatar { width: 38px; height: 38px; font-size: 14px; }
 .quick-notes-area { resize: vertical; min-height: 92px; }
 
 .sub-section-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-.classmates-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(255px, 1fr)); gap: 10px; }
-.classmate-card { background: var(--bg-sidebar); border: 1px solid var(--border); border-radius: 15px; padding: 12px; display: flex; align-items: center; gap: 11px; }
+.classmates-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 12px; }
+.classmate-card {
+  background: var(--bg-sidebar); border: 1px solid var(--border); border-radius: 16px;
+  padding: 13px 14px; display: flex; flex-wrap: wrap; align-items: center; align-content: space-between;
+  gap: 10px 12px;
+}
 .classmate-info { flex: 1; min-width: 0; }
-.classmate-name { font-weight: 700; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.classmate-name { font-weight: 700; font-size: 14.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px; }
+.classmate-info .small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.classmate-card > .inline-actions {
+  flex: 1 0 100%; display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+  padding-top: 10px; border-top: 1px solid var(--border); flex-wrap: nowrap;
+}
+.classmate-card > .inline-actions .tag { margin-right: auto; }
+.classmate-card > .inline-actions .btn { white-space: nowrap; }
 
 /* Settings */
 .settings-panel { display: none; flex-direction: column; gap: 14px; }
@@ -747,7 +758,6 @@ body.compact .chat-item .avatar { width: 38px; height: 38px; font-size: 14px; }
   .mobile-only { display: inline-flex; }
   .app-shell { flex-direction: column; }
 
-  /* Компактная верхняя строка бренда + нативный нижний таб-бар */
   .mobile-topbar {
     display: flex; flex-direction: column; background: var(--bg-rail); border-bottom: 1px solid var(--border);
     padding-top: env(safe-area-inset-top, 0px); flex-shrink: 0; z-index: 50;
@@ -794,7 +804,6 @@ body.compact .chat-item .avatar { width: 38px; height: 38px; font-size: 14px; }
   .mbadge.warn { background: var(--warn); color: #111; }
   .mbadge.ok { background: var(--success); color: #fff; }
 
-  /* Шапка открытого чата с защитой от чёлки / Dynamic Island iPhone */
   .chat-header {
     height: auto;
     min-height: calc(54px + env(safe-area-inset-top, 0px));
@@ -817,7 +826,6 @@ body.compact .chat-item .avatar { width: 38px; height: 38px; font-size: 14px; }
   #section-chats.mobile-chat-open .chat-sidebar { display: none; }
   #section-chats.mobile-chat-open .chat-pane { display: flex; }
 
-  /* Широкие сообщения как в Telegram */
   .messages-scroll {
     padding: 10px 8px 8px;
   }
@@ -857,7 +865,6 @@ body.compact .chat-item .avatar { width: 38px; height: 38px; font-size: 14px; }
   .poll-card { min-width: 0; width: min(100%, 340px); max-width: 100%; }
   .msg-reply-text { max-width: min(280px, 68vw); }
 
-  /* Кнопка «Вниз» и поле ввода прямо внизу без пустой зоны под Netlify */
   .scroll-bottom-btn {
     right: 12px; left: auto;
     bottom: calc(68px + env(safe-area-inset-bottom, 0px));
