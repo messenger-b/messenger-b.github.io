@@ -33,6 +33,8 @@
     friends: [],
     incomingRequests: [],
     outgoingRequests: [],
+    lastFriendSearchUser: null,
+    friendActionPending: new Set(),
     chats: [],
     activeChatMembers: [],
     activeSection: 'chats',
@@ -114,6 +116,14 @@
     const d = new Date(ts), now = new Date();
     return d.toDateString() === now.toDateString() ? formatTime(ts) : d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
   }
+  function formatShortDateTime(ts) {
+    if (!ts) return '';
+    const d = new Date(ts), now = new Date(), y = new Date(now);
+    y.setDate(now.getDate() - 1);
+    if (d.toDateString() === now.toDateString()) return `сегодня в ${formatTime(ts)}`;
+    if (d.toDateString() === y.toDateString()) return `вчера в ${formatTime(ts)}`;
+    return `${d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })} в ${formatTime(ts)}`;
+  }
   function formatDateDivider(ts) {
     const d = new Date(ts), now = new Date(), y = new Date(now);
     y.setDate(now.getDate() - 1);
@@ -149,6 +159,38 @@
     el.textContent = msg;
     $('#toast-container').appendChild(el);
     setTimeout(() => el.remove(), 3400);
+  }
+
+  function getFriendRelation(userOrId) {
+    const uid = typeof userOrId === 'string' ? userOrId : userOrId?.id;
+    const obj = typeof userOrId === 'object' ? userOrId : null;
+    if (!uid) return { status: 'none', friendshipId: null };
+    const fr = state.friends.find((f) => f.user?.id === uid);
+    if (fr) return { status: 'friends', friendshipId: fr.friendshipId };
+    const inc = state.incomingRequests.find((r) => r.user?.id === uid);
+    if (inc) return { status: 'incoming', friendshipId: inc.friendshipId };
+    const out = state.outgoingRequests.find((r) => r.user?.id === uid);
+    if (out) return { status: 'outgoing', friendshipId: out.friendshipId };
+    if (obj?.friendshipStatus && obj.friendshipStatus !== 'none') {
+      return { status: obj.friendshipStatus, friendshipId: obj.friendshipId || null };
+    }
+    if (obj?.isFriend) return { status: 'friends', friendshipId: obj.friendshipId || null };
+    return { status: 'none', friendshipId: null };
+  }
+
+  function renderFriendActionHtml(user, { compact = false } = {}) {
+    if (!user || user.id === state.user?.id) return '';
+    const rel = getFriendRelation(user);
+    if (rel.status === 'friends') {
+      return '<span class="tag" style="background:rgba(16,185,129,0.16);color:var(--success)">В друзьях</span>';
+    }
+    if (rel.status === 'incoming' && rel.friendshipId) {
+      return `<button type="button" class="btn btn-sm btn-primary" data-accept-friend="${rel.friendshipId}">${compact ? 'Принять' : 'Принять заявку'}</button>`;
+    }
+    if (rel.status === 'outgoing' && rel.friendshipId) {
+      return `<button type="button" class="btn btn-sm btn-ghost" data-remove-friend="${rel.friendshipId}" data-remove-kind="cancel" title="Нажмите, чтобы отменить заявку">${ico('clock', 14)} ${compact ? 'Отправлено' : 'Заявка отправлена ×'}</button>`;
+    }
+    return `<button type="button" class="btn btn-sm ${compact ? 'btn-ghost' : 'btn-primary'}" data-add-friend="${escapeHtml(user.id)}" title="Добавить в друзья">${ico('userPlus', 14)}${compact ? '' : ' Добавить в друзья'}</button>`;
   }
 
   // ==================== AUDIO & NOTIFICATIONS ====================
@@ -390,7 +432,6 @@
         }
 
         if (chatId === state.activeChatId) {
-          // Deduplicate against optimistic pending message
           const exists = state.messages.some((m) => m.id === message.id);
           const pendingIdx = state.messages.findIndex((m) => m.pending && m.senderId === message.senderId && m.content === message.content);
           if (pendingIdx !== -1) {
@@ -401,10 +442,11 @@
             state.messages.push(message);
             renderMessages(true);
           }
-          if (message.senderId !== state.user.id) markChatRead(chatId, message.id);
+          if (message.senderId !== state.user.id && state.activeSection === 'chats' && !document.hidden) {
+            markChatRead(chatId, message.id);
+          }
         }
 
-        // Clear activity indicator for sender
         const actMap = state.activityMap.get(chatId);
         if (actMap && actMap.has(message.senderId)) {
           clearTimeout(actMap.get(message.senderId).timer);
@@ -413,7 +455,6 @@
           if (chatId === state.activeChatId) scheduleActiveHeaderRender();
         }
 
-        // Notifications (In-App Push + System SW Notification on unfocused/hidden window!)
         if (message.senderId !== state.user.id) {
           const isMention = state.user?.username && new RegExp(`@${state.user.username}\\b`, 'i').test(message.content || '');
           const shouldNotify = isMention || !chat || !chat.muted;
@@ -458,6 +499,30 @@
         if (payload.chatId === state.activeChatId) {
           const m = state.messages.find((x) => x.id === payload.messageId);
           if (m) { m.reactions = payload.reactions; renderMessages(false); }
+        }
+        break;
+      }
+
+      case 'chat:read': {
+        const { chatId, userId, lastReadMessageId } = payload || {};
+        if (!chatId || !lastReadMessageId || !state.user || userId === state.user.id) break;
+        if (chatId === state.activeChatId) {
+          let changed = false;
+          for (const m of state.messages) {
+            if (m.senderId === state.user.id && typeof m.id === 'number' && m.id <= lastReadMessageId && !m.isRead) {
+              m.isRead = true;
+              changed = true;
+            }
+          }
+          if (changed) renderMessages(false);
+        }
+        const cached = state.messageCache.get(Number(chatId));
+        if (cached) {
+          for (const m of cached.messages) {
+            if (m.senderId === state.user.id && typeof m.id === 'number' && m.id <= lastReadMessageId) {
+              m.isRead = true;
+            }
+          }
         }
         break;
       }
@@ -513,6 +578,8 @@
         };
         for (const u of state.users) syncUser(u);
         for (const f of state.friends) syncUser(f.user);
+        for (const r of state.incomingRequests) syncUser(r.user);
+        for (const r of state.outgoingRequests) syncUser(r.user);
         for (const m of state.activeChatMembers) syncUser(m);
         for (const c of state.chats) syncUser(c.otherUser);
         if (changed) {
@@ -541,6 +608,8 @@
         };
         state.users.forEach(apply);
         state.friends.forEach((f) => apply(f.user));
+        state.incomingRequests.forEach((r) => apply(r.user));
+        state.outgoingRequests.forEach((r) => apply(r.user));
         state.activeChatMembers.forEach(apply);
         state.chats.forEach((c) => apply(c.otherUser));
         if (changed) {
@@ -552,8 +621,7 @@
       }
 
       case 'friends:updated': {
-        loadFriends();
-        loadUsers();
+        loadFriends().then(() => loadUsers()).catch(() => {});
         break;
       }
 
@@ -584,6 +652,8 @@
     state.incomingRequests = data.incoming || [];
     state.outgoingRequests = data.outgoing || [];
     renderFriends();
+    renderClassmates();
+    if (state.lastFriendSearchUser) renderFriendSearchResult(state.lastFriendSearchUser);
     updateNavBadges();
   }
   async function loadSchedule() {
@@ -671,8 +741,6 @@
     }).join('');
   }
 
-  // Coalesce bursts of presence/typing updates into one paint instead of
-  // rebuilding the entire sidebar several times in the same frame.
   let chatListRenderQueued = false;
   let activeHeaderRenderQueued = false;
   function scheduleChatListRender() {
@@ -740,7 +808,6 @@
     else renderMessagesLoading();
     input.focus();
 
-    // Show cached history immediately; refresh messages and participants without blocking navigation.
     const [_, chatInfo] = await Promise.all([
       loadMessages(Number(chatId), { requestToken: token }).catch((err) => {
         if (token === state.chatOpenToken) {
@@ -820,6 +887,13 @@
     if (chat) { chat.unreadCount = 0; renderChatList(); updateNavBadges(); }
     try { await api(`/api/chats/${chatId}/read`, { method: 'POST', body: { messageId } }); } catch {}
   }
+
+  window.addEventListener('focus', () => {
+    if (state.activeSection === 'chats' && state.activeChatId && state.messages.length > 0) {
+      const last = state.messages[state.messages.length - 1];
+      if (last && typeof last.id === 'number') markChatRead(state.activeChatId, last.id);
+    }
+  });
 
   async function loadMessages(chatId, { before = null, q = '', requestToken = null } = {}) {
     const params = new URLSearchParams({ limit: '40' });
@@ -1012,7 +1086,6 @@
     closeMentionPopover();
     broadcastActivity('stop');
 
-    // Editing existing message (optimistic!)
     if (state.editingMsg) {
       const editTarget = state.editingMsg;
       const oldContent = editTarget.content;
@@ -1032,7 +1105,6 @@
       return;
     }
 
-    // 0ms OPTIMISTIC UI SEND!
     const replySnapshot = state.replyTo;
     const tempId = 'tmp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
     const optimisticMsg = {
@@ -1089,7 +1161,7 @@
       const idx = state.messages.findIndex((m) => m.id === tempId);
       if (idx !== -1 && res.message) {
         if (state.messages.some((m) => m.id === res.message.id)) {
-          state.messages.splice(idx, 1); // Already replaced by realtime
+          state.messages.splice(idx, 1);
         } else {
           state.messages[idx] = res.message;
         }
@@ -1108,7 +1180,6 @@
     }
   }
 
-  // 0ms OPTIMISTIC REACTION TOGGLE!
   async function toggleReactionOptimistic(msgId, emoji) {
     const msg = state.messages.find((m) => String(m.id) === String(msgId));
     if (!msg || msg.pending) return;
@@ -1311,34 +1382,97 @@
   function closeModal() { $('#modal-overlay').classList.add('hidden'); }
 
   async function openMessageInfoModal(msgId) {
-    openModal('Данные сообщения', '<div class="muted small">Загрузка...</div>');
+    openModal('Данные сообщения', '<div class="muted small">Загрузка данных…</div>');
     try {
       const data = await api(`/api/messages/${msgId}/info`);
-      const readHtml = data.readBy.length === 0
-        ? '<p class="muted small">Пока никто не отметил прочтение.</p>'
-        : `<div class="list-stack">${data.readBy.map((u) => `
+      const readBy = Array.isArray(data.readBy) ? data.readBy : [];
+      const reactions = Array.isArray(data.reactions) ? data.reactions : [];
+      const totalReactions = reactions.reduce((acc, g) => acc + (g.users?.length || 0), 0);
+      const totalRecipients = Number.isFinite(data.totalRecipients) ? data.totalRecipients : readBy.length;
+      let activeEmojiFilter = 'all';
+
+      const metaSummary = `
+        <div class="list-row" style="margin-bottom:14px;flex-wrap:wrap;gap:6px">
+          <span class="muted small">Отправлено: <strong style="color:var(--text)">${escapeHtml(formatShortDateTime(data.createdAt))}</strong></span>
+          ${data.editedAt ? `<span class="muted small">• Изменено: <strong style="color:var(--text)">${escapeHtml(formatShortDateTime(data.editedAt))}</strong></span>` : ''}
+        </div>`;
+
+      const readHtml = readBy.length === 0
+        ? '<p class="muted small" style="margin-bottom:6px">Пока никто не прочитал (или собеседники скрыли отчёты о прочтении).</p>'
+        : `<div class="list-stack">${readBy.map((u) => `
             <div class="list-row">
-              <div style="display:flex;align-items:center;gap:9px">${renderAvatarHtml(u, 'avatar-sm')}<div><div style="font-weight:600">${escapeHtml(u.displayName)}</div><div class="muted small">@${escapeHtml(u.username)}</div></div></div>
-              <span class="muted small">${ico('checkDouble', 14)}</span>
+              <div style="display:flex;align-items:center;gap:9px;min-width:0">
+                ${renderAvatarHtml(u, 'avatar-sm')}
+                <div style="min-width:0">
+                  <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(u.displayName)} ${escapeHtml(u.statusEmoji || '')}</div>
+                  <div class="muted small">@${escapeHtml(u.username)}</div>
+                </div>
+              </div>
+              <span class="muted small" style="display:inline-flex;align-items:center;gap:4px;flex-shrink:0">
+                ${u.readAt ? escapeHtml(formatShortDateTime(u.readAt)) : 'прочитано'}
+                <span style="color:var(--accent);display:inline-flex">${ico('checkDouble', 14)}</span>
+              </span>
             </div>`).join('')}</div>`;
 
-      const reactHtml = data.reactions.length === 0
-        ? '<p class="muted small">Реакций пока нет.</p>'
-        : data.reactions.map((g) => `
-            <div style="margin-bottom:10px">
-              <div style="font-weight:700;margin-bottom:6px">${escapeHtml(g.emoji)} (${g.users.length})</div>
-              <div class="list-stack">${g.users.map((u) => `
-                <div class="list-row">
-                  <div style="display:flex;align-items:center;gap:9px">${renderAvatarHtml(u, 'avatar-sm')}<div><div style="font-weight:600">${escapeHtml(u.displayName)}</div><div class="muted small">@${escapeHtml(u.username)}</div></div></div>
-                </div>`).join('')}</div>
-            </div>`).join('');
+      const renderReactionsBlock = () => {
+        if (reactions.length === 0) {
+          return '<p class="muted small">Реакций пока нет.</p>';
+        }
+        const pills = `
+          <div class="pill-tabs" id="msg-info-react-tabs" style="margin-bottom:10px;gap:6px">
+            <button type="button" class="pill-tab ${activeEmojiFilter === 'all' ? 'active' : ''}" data-info-emoji="all" style="padding:5px 10px;font-size:12.5px">Все (${totalReactions})</button>
+            ${reactions.map((g) => `
+              <button type="button" class="pill-tab ${activeEmojiFilter === g.emoji ? 'active' : ''}" data-info-emoji="${escapeHtml(g.emoji)}" style="padding:5px 10px;font-size:12.5px">${escapeHtml(g.emoji)} ${g.users.length}</button>
+            `).join('')}
+          </div>`;
 
-      $('#modal-body').innerHTML = `
-        <h4 class="ico-title" style="margin-bottom:8px">${ico('eye', 16)} Прочитали (${data.readBy.length})</h4>
-        ${readHtml}
-        <h4 class="ico-title" style="margin:16px 0 8px">${ico('smile', 16)} Реакции</h4>
-        ${reactHtml}
-      `;
+        const flatList = [];
+        for (const g of reactions) {
+          if (activeEmojiFilter !== 'all' && g.emoji !== activeEmojiFilter) continue;
+          for (const u of (g.users || [])) {
+            flatList.push({ emoji: g.emoji, user: u });
+          }
+        }
+        flatList.sort((a, b) => (b.user.reactedAt || 0) - (a.user.reactedAt || 0));
+
+        const rows = `<div class="list-stack">${flatList.map(({ emoji, user: u }) => `
+          <div class="list-row">
+            <div style="display:flex;align-items:center;gap:9px;min-width:0">
+              ${renderAvatarHtml(u, 'avatar-sm')}
+              <div style="min-width:0">
+                <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(u.displayName)}</div>
+                <div class="muted small">@${escapeHtml(u.username)}${u.reactedAt ? ` • ${escapeHtml(formatShortDateTime(u.reactedAt))}` : ''}</div>
+              </div>
+            </div>
+            <span style="font-size:19px;flex-shrink:0">${escapeHtml(emoji)}</span>
+          </div>`).join('')}</div>`;
+
+        return pills + rows;
+      };
+
+      const renderAll = () => {
+        const readTitle = totalRecipients > 0
+          ? `Прочитали (${readBy.length} из ${totalRecipients})`
+          : `Прочитали (${readBy.length})`;
+        $('#modal-body').innerHTML = `
+          ${metaSummary}
+          <h4 class="ico-title" style="margin-bottom:8px">${ico('eye', 16)} ${readTitle}</h4>
+          ${readHtml}
+          <h4 class="ico-title" style="margin:16px 0 8px">${ico('smile', 16)} Реакции (${totalReactions})</h4>
+          <div id="msg-info-reactions-box">${renderReactionsBlock()}</div>
+        `;
+        const tabs = $('#msg-info-react-tabs');
+        if (tabs) {
+          tabs.onclick = (e) => {
+            const btn = e.target.closest('[data-info-emoji]');
+            if (!btn) return;
+            activeEmojiFilter = btn.dataset.infoEmoji;
+            renderAll();
+          };
+        }
+      };
+
+      renderAll();
     } catch (err) {
       $('#modal-body').innerHTML = `<p class="form-error">${escapeHtml(err.message)}</p>`;
     }
@@ -1469,7 +1603,6 @@
     });
   }
 
-  // CHAT INFO: paint from the current chat cache first; refresh members in the background.
   function renderChatInfoContent(chat, members, membersLoading, chatId, token) {
     if (!chat || token !== state.chatInfoToken) return;
     const memberIdsSet = new Set((members || []).map((m) => m.id));
@@ -1609,13 +1742,9 @@
       ? state.chatMembersCache.get(chatId).slice()
       : (state.activeChatMembers || []).slice();
 
-    // Open from the already-rendered chat summary; do not wait for a multi-query
-    // full chat rebuild just to show the info sheet.
     openModal('Информация о чате', '');
     renderChatInfoContent(chat, cachedMembers, !hasCachedMembers, chatId, token);
 
-    // Membership and presence are refreshed in the background. The user sees
-    // the info panel immediately, and cached members remain visible meanwhile.
     api(`/api/chats/${chatId}/members`).then((data) => {
       if (token !== state.chatInfoToken || state.activeChatId !== chatId || $('#modal-overlay').classList.contains('hidden')) return;
       const members = data.members || [];
@@ -1657,6 +1786,22 @@
   }
 
   // ==================== FRIENDS (DISCORD-STYLE), SCHEDULE, HOMEWORK, WIDGETS ====================
+  function renderFriendSearchResult(user) {
+    const box = $('#friend-search-result');
+    if (!box) return;
+    if (!user) {
+      box.innerHTML = '<span class="muted small">Пользователь с таким точным @логином не найден.</span>';
+      return;
+    }
+    box.innerHTML = `<div class="list-row" style="flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:10px">${renderAvatarHtml(user, 'avatar-sm')}<div><div style="font-weight:700">${escapeHtml(user.displayName)}</div><div class="muted small">@${escapeHtml(user.username)} • Класс ${escapeHtml(user.className)}</div></div></div>
+      <div class="inline-actions">
+        ${renderFriendActionHtml(user)}
+        <button type="button" class="btn btn-sm btn-ghost" data-cm-dm="${escapeHtml(user.id)}">Написать</button>
+      </div>
+    </div>`;
+  }
+
   function renderFriends() {
     const reqCard = $('#friend-requests-card');
     if (reqCard) {
@@ -1666,7 +1811,25 @@
           <div style="display:flex;align-items:center;gap:10px">${renderAvatarHtml(r.user, 'avatar-sm')}<div><div style="font-weight:700">${escapeHtml(r.user.displayName)}</div><div class="muted small">@${escapeHtml(r.user.username)} • Класс ${escapeHtml(r.user.className)}</div></div></div>
           <div class="inline-actions">
             <button type="button" class="btn btn-sm btn-primary" data-accept-friend="${r.friendshipId}">Принять</button>
-            <button type="button" class="btn btn-sm btn-danger" data-remove-friend="${r.friendshipId}">Отклонить</button>
+            <button type="button" class="btn btn-sm btn-danger" data-remove-friend="${r.friendshipId}" data-remove-kind="decline">Отклонить</button>
+          </div>
+        </div>`).join('');
+
+      let outCard = $('#friend-outgoing-card');
+      if (!outCard) {
+        outCard = document.createElement('div');
+        outCard.id = 'friend-outgoing-card';
+        outCard.className = 'settings-card hidden';
+        outCard.style.marginBottom = '16px';
+        outCard.innerHTML = `<h3 class="ico-title" style="margin-bottom:10px">${ico('clock', 17)} Исходящие заявки</h3><div id="friend-outgoing-list" class="list-stack"></div>`;
+        reqCard.insertAdjacentElement('afterend', outCard);
+      }
+      outCard.classList.toggle('hidden', state.outgoingRequests.length === 0);
+      $('#friend-outgoing-list').innerHTML = state.outgoingRequests.map((r) => `
+        <div class="list-row" style="flex-wrap:wrap">
+          <div style="display:flex;align-items:center;gap:10px">${renderAvatarHtml(r.user, 'avatar-sm')}<div><div style="font-weight:700">${escapeHtml(r.user.displayName)}</div><div class="muted small">@${escapeHtml(r.user.username)} • Класс ${escapeHtml(r.user.className)} • Ожидает ответа</div></div></div>
+          <div class="inline-actions">
+            <button type="button" class="btn btn-sm btn-ghost" data-remove-friend="${r.friendshipId}" data-remove-kind="cancel">Отменить заявку</button>
           </div>
         </div>`).join('');
     }
@@ -1687,7 +1850,7 @@
         </div>
         <div class="inline-actions">
           <button type="button" class="btn btn-sm btn-primary" data-cm-dm="${f.user.id}">${ico('chats', 14)}</button>
-          <button type="button" class="btn btn-sm btn-ghost" data-remove-friend="${f.friendshipId}" title="Удалить из друзей">${ico('close', 14)}</button>
+          <button type="button" class="btn btn-sm btn-ghost" data-remove-friend="${f.friendshipId}" data-remove-kind="unfriend" title="Удалить из друзей">${ico('close', 14)}</button>
         </div>
       </div>`).join('');
   }
@@ -1826,7 +1989,9 @@
   function renderClassmates() {
     const myClassOnly = state.users.filter((u) => state.user?.role === 'admin' || u.classId === state.user?.classId || u.role === 'admin');
     $('#classmates-count').textContent = state.user?.role === 'admin' ? `Всего в школе: ${myClassOnly.length}` : `В классе ${state.className}: ${myClassOnly.length}`;
-    $('#classmates-list').innerHTML = myClassOnly.map((u) => `
+    $('#classmates-list').innerHTML = myClassOnly.map((u) => {
+      const friendBtn = renderFriendActionHtml(u, { compact: true });
+      return `
       <div class="classmate-card">
         ${renderAvatarHtml(u)}
         <div class="classmate-info">
@@ -1835,10 +2000,11 @@
           <div class="muted small" style="${u.isOnline ? 'color:var(--success);font-weight:600' : ''}">${formatLastSeen(u.lastSeen, u.isOnline)}</div>
         </div>
         ${u.id !== state.user?.id ? `<div class="inline-actions">
-          ${!u.isFriend ? `<button type="button" class="btn btn-sm btn-ghost" data-add-friend="${u.id}" title="В друзья">${ico('userPlus', 14)}</button>` : ''}
-          <button type="button" class="btn btn-sm btn-primary" data-cm-dm="${u.id}">Написать</button>
+          ${friendBtn}
+          <button type="button" class="btn btn-sm btn-primary" data-cm-dm="${escapeHtml(u.id)}">Написать</button>
         </div>` : '<span class="tag">Вы</span>'}
-      </div>`).join('');
+      </div>`;
+    }).join('');
   }
 
   // ==================== SETTINGS & ADMIN ====================
@@ -2021,6 +2187,60 @@
     el.innerHTML = list.map((u) => `<div class="list-row"><div><div style="font-weight:600">${escapeHtml(u.displayName)} <span class="muted small">@${escapeHtml(u.username)}</span></div><div class="muted small">Класс ${escapeHtml(u.className || '')} • ${escapeHtml(ROLE_LABELS[u.role] || '')}</div></div>${u.id === state.user.id ? '<span class="tag">Вы</span>' : `<button type="button" class="btn btn-sm btn-ghost" onclick="document.querySelector('[data-section=admin]').click()">Открыть в Админке</button>`}</div>`).join('');
   }
 
+  // ==================== FRIEND ACTIONS ====================
+  async function handleSendFriendRequest(userId) {
+    if (!userId || state.friendActionPending.has(`add:${userId}`)) return;
+    state.friendActionPending.add(`add:${userId}`);
+    try {
+      const res = await api('/api/friends/request', { method: 'POST', body: { userId } });
+      if (res.info === 'already_friends') toast('Этот пользователь уже у вас в друзьях', 'info');
+      else if (res.info === 'already_pending') toast('Заявка уже отправлена и ожидает ответа', 'info');
+      else if (res.status === 'accepted') toast('Встречная заявка принята — вы теперь друзья!', 'success');
+      else toast('Заявка в друзья отправлена', 'success');
+      await loadFriends();
+      await loadUsers();
+    } catch (err) {
+      toast(err.message || 'Не удалось отправить заявку', 'error');
+    } finally {
+      state.friendActionPending.delete(`add:${userId}`);
+    }
+  }
+
+  async function handleAcceptFriend(friendshipId) {
+    const id = Number(friendshipId);
+    if (!id || state.friendActionPending.has(`acc:${id}`)) return;
+    state.friendActionPending.add(`acc:${id}`);
+    try {
+      await api(`/api/friends/${id}/accept`, { method: 'POST' });
+      toast('Заявка принята! Теперь вы друзья.', 'success');
+      await loadFriends();
+      await loadUsers();
+    } catch (err) {
+      toast(err.message || 'Не удалось принять заявку', 'error');
+    } finally {
+      state.friendActionPending.delete(`acc:${id}`);
+    }
+  }
+
+  async function handleRemoveFriend(friendshipId, kind = '') {
+    const id = Number(friendshipId);
+    if (!id || state.friendActionPending.has(`rem:${id}`)) return;
+    state.friendActionPending.add(`rem:${id}`);
+    try {
+      await api(`/api/friends/${id}`, { method: 'DELETE' });
+      if (kind === 'cancel') toast('Исходящая заявка отменена');
+      else if (kind === 'decline') toast('Заявка отклонена');
+      else if (kind === 'unfriend') toast('Пользователь удалён из друзей');
+      else toast('Список друзей обновлён');
+      await loadFriends();
+      await loadUsers();
+    } catch (err) {
+      toast(err.message || 'Не удалось обновить список друзей', 'error');
+    } finally {
+      state.friendActionPending.delete(`rem:${id}`);
+    }
+  }
+
   // ==================== NAVIGATION & BOOT ====================
   function switchSection(section) {
     if (section === 'announcements') {
@@ -2057,7 +2277,6 @@
 
     hydrateSettingsUI(); updateNotifPromptUI(); renderEmojiGrid(); connectRealtime();
     await refreshAllData();
-    // Retry subscription sync after authentication is ready (the early SW boot can race login).
     if (window.MESSENGER_B_CONFIG?.VAPID_PUBLIC_KEY && 'Notification' in window && Notification.permission === 'granted') {
       ensureWebPushSubscription().catch((err) => console.warn('[Web Push] Post-login subscription sync:', err));
     }
@@ -2183,15 +2402,28 @@
       const uname = mention.dataset.mention;
       const found = state.users.find((u) => u.username.toLowerCase() === uname.toLowerCase()) || (await api(`/api/users/search?q=${encodeURIComponent(uname)}`)).user;
       if (found && found.id !== state.user.id) {
-        openModal(`@${found.username}`, `
-          <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">${renderAvatarHtml(found, 'avatar-lg')}<div><h3>${escapeHtml(found.displayName)}</h3><div class="muted small">Класс ${escapeHtml(found.className)} • ${formatLastSeen(found.lastSeen, found.isOnline)}</div></div></div>
-          <div class="inline-actions">
-            <button type="button" id="mnt-dm" class="btn btn-primary btn-sm">Написать в ЛС</button>
-            ${!found.isFriend ? `<button type="button" id="mnt-friend" class="btn btn-ghost btn-sm">Добавить в друзья</button>` : '<span class="tag">В друзьях</span>'}
-          </div>
-        `);
-        $('#mnt-dm').onclick = () => { closeModal(); startDmWith(found.id); };
-        if ($('#mnt-friend')) $('#mnt-friend').onclick = async () => { await api('/api/friends/request', { method: 'POST', body: { userId: found.id } }); toast('Заявка в друзья отправлена', 'success'); closeModal(); };
+        const renderMentionModal = () => {
+          openModal(`@${found.username}`, `
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">${renderAvatarHtml(found, 'avatar-lg')}<div><h3>${escapeHtml(found.displayName)}</h3><div class="muted small">Класс ${escapeHtml(found.className)} • ${formatLastSeen(found.lastSeen, found.isOnline)}</div></div></div>
+            <div class="inline-actions" id="mnt-actions">
+              <button type="button" id="mnt-dm" class="btn btn-primary btn-sm">Написать в ЛС</button>
+              ${renderFriendActionHtml(found)}
+            </div>
+          `);
+          $('#mnt-dm').onclick = () => { closeModal(); startDmWith(found.id); };
+          const acts = $('#mnt-actions');
+          if (acts) {
+            acts.onclick = async (ev) => {
+              const addB = ev.target.closest('[data-add-friend]');
+              if (addB) { await handleSendFriendRequest(addB.dataset.addFriend); renderMentionModal(); return; }
+              const accB = ev.target.closest('[data-accept-friend]');
+              if (accB) { await handleAcceptFriend(accB.dataset.acceptFriend); renderMentionModal(); return; }
+              const remB = ev.target.closest('[data-remove-friend]');
+              if (remB) { await handleRemoveFriend(remB.dataset.removeFriend, remB.dataset.removeKind); renderMentionModal(); }
+            };
+          }
+        };
+        renderMentionModal();
       }
       return;
     }
@@ -2270,31 +2502,20 @@
     box.innerHTML = '<span class="muted small">Поиск...</span>';
     try {
       const res = await api(`/api/users/search?q=${encodeURIComponent(q)}`);
-      if (!res.user) { box.innerHTML = '<span class="muted small">Пользователь с таким точным @логином не найден.</span>'; return; }
-      const u = res.user;
-      box.innerHTML = `<div class="list-row" style="flex-wrap:wrap">
-        <div style="display:flex;align-items:center;gap:10px">${renderAvatarHtml(u, 'avatar-sm')}<div><div style="font-weight:700">${escapeHtml(u.displayName)}</div><div class="muted small">@${escapeHtml(u.username)} • Класс ${escapeHtml(u.className)}</div></div></div>
-        <div class="inline-actions">
-          ${u.isFriend ? '<span class="tag">Уже в друзьях</span>' : `<button type="button" class="btn btn-sm btn-primary" data-add-friend="${u.id}">Добавить в друзья</button>`}
-          <button type="button" class="btn btn-sm btn-ghost" data-cm-dm="${u.id}">Написать</button>
-        </div>
-      </div>`;
-    } catch (err) { box.innerHTML = `<span class="form-error">${escapeHtml(err.message)}</span>`; }
+      state.lastFriendSearchUser = res.user || null;
+      renderFriendSearchResult(state.lastFriendSearchUser);
+    } catch (err) {
+      state.lastFriendSearchUser = null;
+      box.innerHTML = `<span class="form-error">${escapeHtml(err.message)}</span>`;
+    }
   });
   $('#section-widgets').addEventListener('click', async (e) => {
     const addF = e.target.closest('[data-add-friend]');
-    if (addF) {
-      try {
-        const res = await api('/api/friends/request', { method: 'POST', body: { userId: addF.dataset.addFriend } });
-        toast(res.status === 'accepted' ? 'Вы теперь друзья!' : 'Заявка в друзья отправлена', 'success');
-        await loadFriends(); await loadUsers();
-      } catch (err) { toast(err.message, 'error'); }
-      return;
-    }
+    if (addF) { await handleSendFriendRequest(addF.dataset.addFriend); return; }
     const accF = e.target.closest('[data-accept-friend]');
-    if (accF) { await api(`/api/friends/${accF.dataset.acceptFriend}/accept`, { method: 'POST' }); toast('Заявка принята!', 'success'); await loadFriends(); await loadUsers(); return; }
+    if (accF) { await handleAcceptFriend(accF.dataset.acceptFriend); return; }
     const remF = e.target.closest('[data-remove-friend]');
-    if (remF) { await api(`/api/friends/${remF.dataset.removeFriend}`, { method: 'DELETE' }); toast('Обновлено'); await loadFriends(); await loadUsers(); return; }
+    if (remF) { await handleRemoveFriend(remF.dataset.removeFriend, remF.dataset.removeKind || ''); return; }
     const dmB = e.target.closest('[data-cm-dm]');
     if (dmB) { startDmWith(dmB.dataset.cmDm); }
   });

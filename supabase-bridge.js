@@ -62,6 +62,7 @@
   let cachedClasses = null;
   let cachedClassesAt = 0;
   let cachedFriendIds = new Set();
+  let cachedFriendships = new Map(); // otherUserId -> { id, status: 'friends'|'incoming'|'outgoing', createdAt }
   let onlinePresenceIds = new Set();
   let presenceReady = false;
   const PROFILE_COLUMNS = 'id, username, display_name, role, class_id, bio, status_emoji, avatar_url, avatar_color, created_at';
@@ -135,7 +136,6 @@
     }
     if (!prof) return null;
 
-    // The profiles table no longer grants email column access. This RPC returns only the caller's own email.
     const [{ data: ownEmail }, cmap] = await Promise.all([sb.rpc('get_my_email'), getClassesMap()]);
     const full = { ...prof, email: ownEmail || '', className: cmap.get(prof.class_id) || '7Б' };
     cachedProfile = full;
@@ -151,6 +151,7 @@
       ? onlinePresenceIds.has(p.id)
       : (stamp && (Date.now() - stamp) < 45_000));
     const className = p.className || p.class_name || (cmap && cmap.get(p.class_id)) || p.classes?.name || '7Б';
+    const rel = cachedFriendships.get(p.id) || null;
     return {
       id: p.id,
       email: p.id === cachedProfile?.id ? (p.email || '') : '',
@@ -165,7 +166,9 @@
       avatarColor: p.avatar_color || '#2AABEE',
       isOnline: Boolean(isOnlineNow),
       canSeeLastSeen: lastSeenVisible,
-      isFriend: cachedFriendIds.has(p.id),
+      isFriend: rel?.status === 'friends' || cachedFriendIds.has(p.id),
+      friendshipStatus: rel?.status || 'none',
+      friendshipId: rel?.id || null,
       lastSeen: stamp,
     };
   }
@@ -177,10 +180,12 @@
     let visible = new Map();
     if (ids.length) {
       const { data, error } = await sb.rpc('get_profile_presence_visibility', { p_user_ids: ids });
-      if (!error) visible = new Map((data || []).map((x) => [x.user_id, {
-        allowed: Boolean(x.can_see_last_seen),
-        lastSeen: x.can_see_last_seen && x.last_seen ? toMs(x.last_seen) : null,
-      }]));
+      if (!error) {
+        visible = new Map((data || []).map((x) => [x.user_id, {
+          allowed: Boolean(x.can_see_last_seen),
+          lastSeen: x.can_see_last_seen && x.last_seen ? toMs(x.last_seen) : null,
+        }]));
+      }
     }
     return profiles.map((p) => {
       const presence = visible.get(p.id);
@@ -224,21 +229,32 @@
 
   async function refreshFriendIds(myId) {
     try {
-      const { data } = await sb.from('friendships').select('requester_id, addressee_id, status').or(`requester_id.eq.${myId},addressee_id.eq.${myId}`);
-      const set = new Set();
+      const { data, error } = await sb
+        .from('friendships')
+        .select('id, requester_id, addressee_id, status, created_at')
+        .or(`requester_id.eq.${myId},addressee_id.eq.${myId}`)
+        .order('created_at', { ascending: false });
+      if (error) console.warn('[Supabase friendships]', error);
+      const acceptedSet = new Set();
+      const relMap = new Map();
       for (const f of (data || [])) {
-        if (f.status === 'accepted') {
-          set.add(f.requester_id === myId ? f.addressee_id : f.requester_id);
+        const otherId = f.requester_id === myId ? f.addressee_id : f.requester_id;
+        const relStatus = f.status === 'accepted'
+          ? 'friends'
+          : (f.addressee_id === myId ? 'incoming' : 'outgoing');
+        if (!relMap.has(otherId) || relStatus === 'friends') {
+          relMap.set(otherId, { id: f.id, status: relStatus, createdAt: toMs(f.created_at) });
         }
+        if (f.status === 'accepted') acceptedSet.add(otherId);
       }
-      cachedFriendIds = set;
+      cachedFriendIds = acceptedSet;
+      cachedFriendships = relMap;
       return data || [];
     } catch {
       return [];
     }
   }
 
-  // FIXED: Loads profiles for BOTH message senders AND replied-to message senders (never shows "Пользователь"!)
   async function enrichMessages(rows, myId) {
     if (!rows || rows.length === 0) return [];
     const msgIds = rows.map((r) => r.id);
@@ -422,7 +438,6 @@
     }).filter(Boolean);
   }
 
-  // Broadcast typing / voice recording state in real time
   window.__cloudSendActivity = (chatId, action) => {
     if (!realtimeChannel || !cachedProfile || !chatId) return;
     realtimeChannel.send({
@@ -432,12 +447,11 @@
         chatId,
         userId: cachedProfile.id,
         displayName: cachedProfile.display_name,
-        action, // 'typing' | 'voice' | 'stop'
+        action,
       },
     }).catch(() => {});
   };
 
-  // Live Realtime + Presence (instant online/offline + live typing/voice!)
   window.__cloudConnectRealtime = async (onEvent, onBanner) => {
     wsEmit = onEvent;
     if (realtimeChannel) {
@@ -498,11 +512,22 @@
         if (enriched) wsEmit('message:reaction', { chatId: msg.chat_id, messageId: msgId, reactions: enriched.reactions });
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'poll_votes' }, () => wsEmit('user:updated', {}))
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'chat_members' }, () => wsEmit('user:updated', {}))
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'chat_members' }, (payload) => {
+        const row = payload.new;
+        if (row && row.chat_id && row.last_read_message_id) {
+          wsEmit('chat:read', {
+            chatId: Number(row.chat_id),
+            userId: row.user_id,
+            lastReadMessageId: Number(row.last_read_message_id),
+          });
+        }
+      })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'chat_members' }, () => wsEmit('user:updated', {}))
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'chat_members' }, () => wsEmit('user:updated', {}))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'friendships' }, () => wsEmit('friends:updated', {}))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'schedule_items' }, () => wsEmit('schedule:updated', {}))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'homework_items' }, () => wsEmit('homework:updated', {}))
-            .subscribe(async (status) => {
+      .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
           onBanner(false);
           if (me?.id) {
@@ -516,7 +541,6 @@
         }
       });
 
-    // Cleanly untrack & save exact last_seen when user leaves/closes tab!
     const markOfflineNow = () => {
       if (realtimeChannel) {
         try { realtimeChannel.untrack(); } catch {}
@@ -529,7 +553,6 @@
     window.__mbPageHide = markOfflineNow;
     window.addEventListener('pagehide', markOfflineNow);
 
-    // Re-track when returning to tab
     document.removeEventListener('visibilitychange', window.__mbVisChange);
     window.__mbVisChange = () => {
       if (document.visibilityState === 'visible' && realtimeChannel && me?.id) {
@@ -613,6 +636,8 @@
       if (method === 'POST' && pathname === '/api/auth/logout') {
         if (realtimeChannel) { try { realtimeChannel.untrack(); } catch {} }
         invalidateProfileCache();
+        cachedFriendIds = new Set();
+        cachedFriendships = new Map();
         await sb.auth.signOut();
         return jsonRes({ ok: true });
       }
@@ -704,7 +729,6 @@
         return jsonRes({ valid: !data?.app_lock_pin || data.app_lock_pin === String(body.pin || '') });
       }
 
-      // Web Push subscription storage. The VAPID private key lives only in Supabase Edge Function secrets.
       if (method === 'POST' && pathname === '/api/push/subscription') {
         const endpoint = String(body.endpoint || '').trim();
         const p256dh = String(body.keys?.p256dh || '').trim();
@@ -763,9 +787,10 @@
           const otherId = r.requester_id === me.id ? r.addressee_id : r.requester_id;
           const u = pMap.get(otherId);
           if (!u) continue;
-          if (r.status === 'accepted') friends.push({ friendshipId: r.id, user: u });
-          else if (r.addressee_id === me.id) incoming.push({ friendshipId: r.id, user: u });
-          else outgoing.push({ friendshipId: r.id, user: u });
+          const entry = { friendshipId: r.id, createdAt: toMs(r.created_at), user: u };
+          if (r.status === 'accepted') friends.push(entry);
+          else if (r.addressee_id === me.id) incoming.push(entry);
+          else outgoing.push(entry);
         }
         return jsonRes({ friends, incoming, outgoing });
       }
@@ -773,39 +798,43 @@
       if (method === 'GET' && pathname === '/api/users/search') {
         const q = String(query.q || '').trim().replace(/^@/, '');
         if (q.length < 2) return jsonRes({ user: null });
-        const { data, error } = await sb.rpc('search_user_by_username', { p_username: q });
-        if (error || !data || data.length === 0) return jsonRes({ user: null });
-        return jsonRes({ user: (await formatProfiles(data, await getClassesMap()))[0] || null });
+        const [searchRes, cmap] = await Promise.all([
+          sb.rpc('search_user_by_username', { p_username: q }),
+          getClassesMap(),
+          refreshFriendIds(me.id),
+        ]);
+        if (searchRes.error || !searchRes.data || searchRes.data.length === 0) return jsonRes({ user: null });
+        return jsonRes({ user: (await formatProfiles(searchRes.data, cmap))[0] || null });
       }
 
       if (method === 'POST' && pathname === '/api/friends/request') {
         const targetId = body.userId;
         if (!targetId || targetId === me.id) return jsonRes({ error: 'Некорректный пользователь' }, 400);
-        // Check if reverse pending request exists -> auto-accept!
-        const { data: rev } = await sb.from('friendships').select('*').eq('requester_id', targetId).eq('addressee_id', me.id).maybeSingle();
-        if (rev) {
-          await sb.from('friendships').update({ status: 'accepted' }).eq('id', rev.id);
-          await refreshFriendIds(me.id);
-          return jsonRes({ status: 'accepted' });
-        }
-        const { error } = await sb.from('friendships').insert({ requester_id: me.id, addressee_id: targetId, status: 'pending' });
-        if (error) return jsonRes({ error: error.message }, 400);
-        return jsonRes({ status: 'pending' }, 201);
+        const { data, error } = await sb.rpc('send_friend_request', { p_target_id: targetId });
+        if (error) return jsonRes({ error: error.message || 'Не удалось отправить заявку' }, 400);
+        const row = Array.isArray(data) ? data[0] : data;
+        await refreshFriendIds(me.id);
+        return jsonRes({
+          status: row?.status || 'pending',
+          friendshipId: row?.friendship_id || null,
+          info: row?.info || 'created',
+        }, row?.info === 'created' ? 201 : 200);
       }
 
       if (method === 'POST' && (m = pathname.match(/^\/api\/friends\/(\d+)\/accept$/))) {
-        await sb.from('friendships').update({ status: 'accepted' }).eq('id', Number(m[1])).eq('addressee_id', me.id);
+        const { error } = await sb.from('friendships').update({ status: 'accepted' }).eq('id', Number(m[1])).eq('addressee_id', me.id);
+        if (error) return jsonRes({ error: error.message || 'Не удалось принять заявку' }, 400);
         await refreshFriendIds(me.id);
         return jsonRes({ ok: true });
       }
 
       if (method === 'DELETE' && (m = pathname.match(/^\/api\/friends\/(\d+)$/))) {
-        await sb.from('friendships').delete().eq('id', Number(m[1]));
+        const { error } = await sb.from('friendships').delete().eq('id', Number(m[1]));
+        if (error) return jsonRes({ error: error.message || 'Не удалось обновить список друзей' }, 400);
         await refreshFriendIds(me.id);
         return jsonRes({ ok: true });
       }
 
-      // Users (strictly scoped: admin sees all; others see ONLY classmates + friends + admins — NO strangers!)
       if (method === 'GET' && pathname === '/api/users') {
         const [cmap] = await Promise.all([getClassesMap(), refreshFriendIds(me.id)]);
         let q = sb.from('profiles').select(PROFILE_COLUMNS).order('display_name');
@@ -933,7 +962,7 @@
 
       if (method === 'POST' && (m = pathname.match(/^\/api\/chats\/(\d+)\/read$/))) {
         if (body.messageId) {
-          sb.from('chat_members').update({ last_read_message_id: Number(body.messageId) }).eq('chat_id', Number(m[1])).eq('user_id', me.id).then(() => {});
+          sb.rpc('mark_chat_read', { p_chat_id: Number(m[1]), p_message_id: Number(body.messageId) }).then(() => {});
         }
         return jsonRes({ ok: true });
       }
@@ -949,28 +978,48 @@
       // ==================== MESSAGES & MESSAGE INFO ("ДАННЫЕ") ====================
       if (method === 'GET' && (m = pathname.match(/^\/api\/messages\/(\d+)\/info$/))) {
         const msgId = Number(m[1]);
-        const { data: msg } = await sb.from('messages').select('id, chat_id, sender_id, created_at').eq('id', msgId).maybeSingle();
+        const { data: msg } = await sb.from('messages').select('id, chat_id, sender_id, created_at, edited_at').eq('id', msgId).maybeSingle();
         if (!msg) return jsonRes({ error: 'Сообщение не найдено' }, 404);
 
-        const [readRes, reactRes, cmap] = await Promise.all([
+        const [readRes, reactRes, membersCountRes, cmap] = await Promise.all([
           sb.rpc('get_message_readers', { p_message_id: msgId }),
-          sb.from('message_reactions').select('emoji, user_id, profiles(id, username, display_name, role, class_id, bio, status_emoji, avatar_url, avatar_color, created_at)').eq('message_id', msgId),
+          sb.rpc('get_message_reactions_detail', { p_message_id: msgId }),
+          sb.from('chat_members').select('user_id', { count: 'exact', head: true }).eq('chat_id', msg.chat_id),
           getClassesMap(),
         ]);
         if (readRes.error) return jsonRes({ error: readRes.error.message }, 403);
-        const readBy = await formatProfiles(readRes.data || [], cmap);
-        const reactionRows = reactRes.data || [];
-        const reactionProfiles = await formatProfiles(reactionRows.map((r) => r.profiles).filter(Boolean), cmap);
-        const profileMap = new Map(reactionProfiles.map((p) => [p.id, p]));
+        if (reactRes.error) return jsonRes({ error: reactRes.error.message }, 403);
+
+        const rawReaders = readRes.data || [];
+        const formattedReaders = await formatProfiles(rawReaders, cmap);
+        const readAtMap = new Map(rawReaders.map((r) => [r.id, r.read_at ? toMs(r.read_at) : null]));
+        const readBy = formattedReaders.map((u) => ({ ...u, readAt: readAtMap.get(u.id) || null }));
+
+        const rawReactions = reactRes.data || [];
+        const formattedReactors = await formatProfiles(rawReactions, cmap);
+        const reactorMap = new Map(formattedReactors.map((p) => [p.id, p]));
         const reactGroups = new Map();
-        for (const r of reactionRows) {
-          const profile = profileMap.get(r.user_id);
+        for (const r of rawReactions) {
+          const profile = reactorMap.get(r.id);
           if (!profile) continue;
           if (!reactGroups.has(r.emoji)) reactGroups.set(r.emoji, []);
-          reactGroups.get(r.emoji).push(profile);
+          reactGroups.get(r.emoji).push({
+            ...profile,
+            reactedAt: r.reacted_at ? toMs(r.reacted_at) : null,
+          });
         }
         const reactions = Array.from(reactGroups.entries()).map(([emoji, users]) => ({ emoji, users }));
-        return jsonRes({ readBy, reactions, createdAt: toMs(msg.created_at) });
+        const totalMembers = membersCountRes.count || 0;
+        const totalRecipients = msg.sender_id ? Math.max(0, totalMembers - 1) : totalMembers;
+
+        return jsonRes({
+          readBy,
+          reactions,
+          totalRecipients,
+          isMine: msg.sender_id === me.id,
+          createdAt: toMs(msg.created_at),
+          editedAt: msg.edited_at ? toMs(msg.edited_at) : null,
+        });
       }
 
       if (method === 'GET' && (m = pathname.match(/^\/api\/chats\/(\d+)\/messages$/))) {
@@ -1071,7 +1120,7 @@
           reactions: [],
           editedAt: null,
           deleted: false,
-          isRead: true,
+          isRead: false,
           createdAt: toMs(inserted.created_at),
         };
         return jsonRes({ message: fastMsg }, 201);
